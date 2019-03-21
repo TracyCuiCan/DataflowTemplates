@@ -30,7 +30,7 @@
   <version>0.1-SNAPSHOT</version>
   <name>Google Cloud Teleport</name>
   <description>
-    Cloud teleport is a collection of Apache Beam pipelines for common tasks, like data movements
+    Cloud Teleport is a collection of Apache Beam pipelines for common tasks, like data movement
     across databases or batch transforms on random datasets.
   </description>
 
@@ -38,7 +38,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <avro.version>1.8.2</avro.version>
     <checkstyle.version>8.7</checkstyle.version>
-    <beam.version>2.7.0</beam.version>
+    <beam.version>2.10.0</beam.version>
     <hamcrest.version>1.3</hamcrest.version>
     <java.version>1.8</java.version>
     <junit.version>4.12</junit.version>
@@ -60,7 +60,7 @@
     <spanner.version>0.54.0-beta</spanner.version>
     <bigtable.version>1.5.0</bigtable.version>
     <bigquery.version>v2-rev374-1.22.0</bigquery.version>
-    <protobuf-util.version>3.3.1</protobuf-util.version>
+    <protobuf-util.version>3.6.1</protobuf-util.version>
     <protobuf.version>3.6.0</protobuf.version>
     <findbugs.version>3.0.1</findbugs.version>
     <guava.version>20.0</guava.version>
@@ -68,9 +68,9 @@
     <gson.version>2.7</gson.version>
     <jackson.version>2.8.8</jackson.version>
     <commons-csv.version>1.5</commons-csv.version>
-    <google.cloud.core>1.36.0</google.cloud.core>
+    <google.cloud.core>1.61.0</google.cloud.core>
     <grpc.version>1.13.1</grpc.version>
-    <google-storage-api.version>v1-rev124-1.23.0</google-storage-api.version>
+    <google-storage-api.version>v1-rev20181013-1.27.0</google-storage-api.version>
     <mvn-target-dir>${basedir}/target</mvn-target-dir>
     <derby.version>10.12.1.1</derby.version>
     <commons-pool2.version>2.4.2</commons-pool2.version>
@@ -81,6 +81,7 @@
     <autovalue.annotations.version>1.6</autovalue.annotations.version>
     <autovalue.version>1.6.2</autovalue.version>
     <excluded.spanner.tests>com.google.cloud.teleport.spanner.IntegrationTest</excluded.spanner.tests>
+  	<dlp.version>0.79.0-beta</dlp.version>
   </properties>
 
   <dependencies>
@@ -117,6 +118,12 @@
       <version>${beam.version}</version>
     </dependency>
     <dependency>
+      <!-- Direct runner included for local development and testing. -->
+      <groupId>org.apache.beam</groupId>
+      <artifactId>beam-runners-direct-java</artifactId>
+      <version>${beam.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.apache.beam</groupId>
       <artifactId>beam-sdks-java-io-jdbc</artifactId>
       <version>${beam.version}</version>
@@ -145,12 +152,6 @@
       <groupId>org.mockito</groupId>
       <artifactId>mockito-core</artifactId>
       <version>${mockito-core.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.beam</groupId>
-      <artifactId>beam-runners-direct-java</artifactId>
-      <version>${beam.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -219,6 +220,15 @@
       <artifactId>bigtable-hbase-1.x-shaded</artifactId>
       <version>${bigtable.version}</version>
       <scope>runtime</scope>
+      <exclusions>
+        <!-- slf4j-log4j12 and log4j-over-slf4j cannot coexist
+             https://www.slf4j.org/codes.html
+             -->
+        <exclusion>
+          <groupId>org.slf4j</groupId>
+          <artifactId>slf4j-log4j12</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>com.google.api.grpc</groupId>
@@ -335,6 +345,17 @@
       <version>${junit.version}</version>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>com.google.cloud</groupId>
+      <artifactId>google-cloud-dlp</artifactId>
+      <version>${dlp.version}</version>
+      <exclusions>
+        <exclusion>
+          <groupId>io.grpc</groupId>
+          <artifactId>grpc-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
   </dependencies>
 
   <build>
@@ -414,6 +435,14 @@
               <!-- Ignore runtime-only dependencies in analysis -->
               <ignoreNonCompile>true</ignoreNonCompile>
               <failOnWarning>true</failOnWarning>
+              <ignoredUsedUndeclaredDependencies>
+                <ignoredUsedUndeclaredDependency>
+                  com.google.api.grpc:proto-google-cloud-dlp-v2
+                </ignoredUsedUndeclaredDependency>
+                <ignoredUsedUndeclaredDependency>
+                  org.apache.beam:beam-model-pipeline
+                </ignoredUsedUndeclaredDependency>
+             </ignoredUsedUndeclaredDependencies>
             </configuration>
           </execution>
         </executions>
@@ -527,7 +556,7 @@
             <configuration>
               <rules>
                 <enforceBytecodeVersion>
-                  <maxJdkVersion>1.8</maxJdkVersion>
+                  <maxJdkVersion>1.9</maxJdkVersion>
                   <excludes>
                     <!--
                       Supplied by the user JDK and compiled with matching

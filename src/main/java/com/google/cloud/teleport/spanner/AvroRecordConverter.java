@@ -22,6 +22,7 @@ import com.google.cloud.Timestamp;
 import com.google.cloud.spanner.Mutation;
 import com.google.cloud.teleport.spanner.ddl.Column;
 import com.google.cloud.teleport.spanner.ddl.Table;
+import com.google.common.annotations.VisibleForTesting;
 import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Optional;
@@ -53,12 +54,9 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
       Column column = table.column(fieldName);
       if (column == null) {
         throw new IllegalArgumentException(
-            "Cannot find a corresponding column for field "
-                + fieldName
-                + " in table "
-                + table.prettyPrint()
-                + " schema "
-                + schema.toString(true));
+            String.format(
+                "Cannot find corresponding column for field %s in table %s schema %s",
+                fieldName, table.prettyPrint(), schema.toString(true)));
       }
 
       Schema avroFieldSchema = field.schema();
@@ -93,7 +91,9 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
               .to(readTimestamp(record, avroType, logicalType, fieldName).orElse(null));
           break;
         case DATE:
-          builder.set(column.name()).to(readDate(record, avroType, fieldName).orElse(null));
+          builder
+              .set(column.name())
+              .to(readDate(record, avroType, logicalType, fieldName).orElse(null));
           break;
         case ARRAY:
           {
@@ -146,24 +146,17 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
                 break;
               default:
                 throw new IllegalArgumentException(
-                    "Cannot convert a field "
-                        + fieldName
-                        + " in schema "
-                        + schema.toString(true)
-                        + " table "
-                        + table.prettyPrint());
+                    String.format(
+                        "Cannot convert field %s in schema %s table %s",
+                        fieldName, schema.toString(true), table.prettyPrint()));
             }
             break;
           }
         default:
           throw new IllegalArgumentException(
-              "Cannot convert a field "
-                  + fieldName
-                  + " in schema "
-                  + " schema "
-                  + schema.toString(true)
-                  + " table "
-                  + table.prettyPrint());
+              String.format(
+                  "Cannot convert field %s in schema %s table %s",
+                  fieldName, schema.toString(true), table.prettyPrint()));
       }
     }
 
@@ -224,43 +217,40 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
     }
   }
 
+  @VisibleForTesting
   @SuppressWarnings("unchecked")
-  private Optional<List<Timestamp>> readTimestampArray(
+  static Optional<List<Timestamp>> readTimestampArray(
       GenericRecord record, Schema.Type avroType, LogicalType logicalType, String fieldName) {
+    Object fieldValue = record.get(fieldName);
+    if (fieldValue == null) {
+      return Optional.empty();
+    }
     switch (avroType) {
       case LONG:
         {
-          List<Long> value = (List<Long>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
-          if (LogicalTypes.timestampMillis().equals(logicalType)) {
-            return Optional.of(
-                value
-                    .stream()
-                    .map(x -> x == null ? null : Timestamp.ofTimeMicroseconds(1000L * x))
-                    .collect(Collectors.toList()));
-          }
-          if (LogicalTypes.timestampMicros().equals(logicalType)) {
+          List<Long> value = (List<Long>) fieldValue;
+          // Default to microseconds
+          if (logicalType == null || LogicalTypes.timestampMicros().equals(logicalType)) {
             return Optional.of(
                 value
                     .stream()
                     .map(x -> x == null ? null : Timestamp.ofTimeMicroseconds(x))
                     .collect(Collectors.toList()));
+          } else if (LogicalTypes.timestampMillis().equals(logicalType)) {
+            return Optional.of(
+                value
+                    .stream()
+                    .map(x -> x == null ? null : Timestamp.ofTimeMicroseconds(1000L * x))
+                    .collect(Collectors.toList()));
+          } else {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Cannot interpret Avrotype LONG LogicalType %s as TIMESTAMP", logicalType));
           }
-          // Default to microseconds
-          return Optional.of(
-              value
-                  .stream()
-                  .map(x -> x == null ? null : Timestamp.ofTimeMicroseconds(x))
-                  .collect(Collectors.toList()));
         }
       case STRING:
         {
-          List<Utf8> value = (List<Utf8>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
+          List<Utf8> value = (List<Utf8>) fieldValue;
           return Optional.of(
               value
                   .stream()
@@ -272,111 +262,116 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
     }
   }
 
+  @VisibleForTesting
   @SuppressWarnings("unchecked")
-  private Optional<List<String>> readStringArray(
+  static Optional<List<String>> readStringArray(
       GenericRecord record, Schema.Type avroType, String fieldName) {
-
+    List<Object> fieldValue = (List<Object>) record.get(fieldName);
+    if (fieldValue == null) {
+      return Optional.empty();
+    }
     switch (avroType) {
       case BOOLEAN:
       case FLOAT:
       case DOUBLE:
       case LONG:
       case INT:
-        {
-          List<Object> value = (List<Object>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
-          return Optional.of(
-              value
-                  .stream()
-                  .map(x -> x == null ? null : String.valueOf(x))
-                  .collect(Collectors.toList()));
-        }
       case STRING:
-        {
-          List<Utf8> value = (List<Utf8>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
-          return Optional.of(
-              value
-                  .stream()
-                  .map(x -> x == null ? null : x.toString())
-                  .collect(Collectors.toList()));
-        }
+        // This relies on the .toString() method present in all classes.
+        // It is not necessary to know the exact type of x for that.
+        return Optional.of(
+            fieldValue.stream()
+                .map(x -> x == null ? null : String.valueOf(x))
+                .collect(Collectors.toList()));
       default:
         throw new IllegalArgumentException("Cannot interpret " + avroType + " as STRING");
     }
   }
 
+  @VisibleForTesting
   @SuppressWarnings("unchecked")
-  private Optional<List<Double>> readFloat64Array(
+  static Optional<List<Double>> readFloat64Array(
       GenericRecord record, Schema.Type avroType, String fieldName) {
+    Object fieldValue = record.get(fieldName);
+    if (fieldValue == null) {
+      return Optional.empty();
+    }
     switch (avroType) {
-      case FLOAT:
+      // For type check at compile time, the type of x has to be specified (as cast) so that
+      // convertability to double can be verified.
       case DOUBLE:
-      case LONG:
+        return Optional.of((List<Double>) fieldValue);
+      case FLOAT:
+        {
+          List<Float> value = (List<Float>) fieldValue;
+          return Optional.of(
+              value.stream()
+                  .map(x -> x == null ? null : Double.valueOf(x))
+                  .collect(Collectors.toList()));
+        }
       case INT:
         {
-          // Here we rely on java type casting.
-          List<Object> value = (List) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
+          List<Integer> value = (List<Integer>) fieldValue;
           return Optional.of(
-              value.stream().map(x -> x == null ? null : (double) x).collect(Collectors.toList()));
+              value.stream()
+                  .map(x -> x == null ? null : Double.valueOf(x))
+                  .collect(Collectors.toList()));
         }
-      case STRING:
-        {
+      case LONG: {
+          List<Long> value = (List<Long>) record.get(fieldName);
+          return Optional.of(
+              value.stream()
+                  .map(x -> x == null ? null : Double.valueOf(x))
+                  .collect(Collectors.toList()));
+      }
+      case STRING: {
           List<Utf8> value = (List<Utf8>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
           return Optional.of(
               value
                   .stream()
-                  .map(x -> x == null ? null : Double.parseDouble(x.toString()))
+                  .map(x -> x == null ? null : Double.valueOf(x.toString()))
                   .collect(Collectors.toList()));
-        }
+      }
       default:
         throw new IllegalArgumentException("Cannot interpret " + avroType + " as FLOAT64");
     }
   }
 
+  @VisibleForTesting
   @SuppressWarnings("unchecked")
-  private Optional<List<Long>> readInt64Array(
+  static Optional<List<Long>> readInt64Array(
       GenericRecord record, Schema.Type avroType, String fieldName) {
+    Object fieldValue = record.get(fieldName);
+    if (fieldValue == null) {
+      return Optional.empty();
+    }
     switch (avroType) {
+      // For type check at compile time, the type of x has to be specified (as cast) so that
+      // convertability to long can be verified.
       case LONG:
-      case INT:
-        {
-          List<Object> value = (List<Object>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
+        return Optional.of((List<Long>) fieldValue);
+      case INT: {
+          List<Integer> value = (List<Integer>) fieldValue;
           return Optional.of(
-              value.stream().map(x -> x == null ? null : (long) x).collect(Collectors.toList()));
-        }
-      case STRING:
-        {
-          List<Utf8> value = (List<Utf8>) record.get(fieldName);
-          if (value == null) {
-            return Optional.empty();
-          }
-          return Optional.of(
-              value
-                  .stream()
-                  .map(x -> x == null ? null : Long.parseLong(x.toString()))
+              value.stream()
+                  .map(x -> x == null ? null : Long.valueOf(x))
                   .collect(Collectors.toList()));
-        }
+      }
+      case STRING: {
+          List<Utf8> value = (List<Utf8>) fieldValue;
+          return Optional.of(
+              value.stream()
+                  .map(x -> x == null ? null : Long.valueOf(x.toString()))
+                  .collect(Collectors.toList()));
+      }
       default:
         throw new IllegalArgumentException("Cannot interpret " + avroType + " as INT64");
     }
   }
 
+  @VisibleForTesting
   @SuppressWarnings("unchecked")
-  private Optional<List<Boolean>> readBoolArray(
+  static Optional<List<Boolean>> readBoolArray(
       GenericRecord record, Schema.Type avroType, String fieldName) {
     switch (avroType) {
       case BOOLEAN:
@@ -390,7 +385,7 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
           List<Boolean> result =
               value
                   .stream()
-                  .map(x -> x == null ? null : Boolean.parseBoolean(x.toString()))
+                  .map(x -> x == null ? null : Boolean.valueOf(x.toString()))
                   .collect(Collectors.toList());
           return Optional.of(result);
         }
@@ -399,8 +394,19 @@ public class AvroRecordConverter implements SerializableFunction<GenericRecord, 
     }
   }
 
-  private Optional<Date> readDate(GenericRecord record, Schema.Type avroType, String fieldName) {
+  private Optional<Date> readDate(
+      GenericRecord record, Schema.Type avroType, LogicalType logicalType, String fieldName) {
     switch (avroType) {
+      case INT:
+        if (logicalType == null || !LogicalTypes.date().equals(logicalType)) {
+          throw new IllegalArgumentException(
+              "Cannot interpret Avrotype INT Logicaltype " + logicalType + " as DATE");
+        }
+        // Avro Date is number of days since Jan 1, 1970.
+        // Have to convert to Java Date first before creating google.cloud.core.Date
+        return Optional.ofNullable((Integer) record.get(fieldName))
+            .map(x -> new java.util.Date((long) x * 24L * 3600L * 1000L))
+            .map(Date::fromJavaUtilDate);
       case STRING:
         return Optional.ofNullable((Utf8) record.get(fieldName))
             .map(Utf8::toString)
